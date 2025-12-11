@@ -1,6 +1,6 @@
 import { TokenAsset } from "@/hooks/useSolanaPortfolio";
 import { formatCurrency, formatNumber } from "@/utils/format";
-import { Coins, AlertCircle } from "lucide-react";
+import { Coins } from "lucide-react";
 
 interface TokenTableProps {
     tokens: TokenAsset[];
@@ -42,12 +42,24 @@ export default function TokenTable({ tokens, isLoading }: TokenTableProps) {
                             <tr key={token.mint} className="hover:bg-white/5 transition-colors group">
                                 <td className="px-6 py-4">
                                     <div className="flex items-center gap-3">
-                                        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-gray-800 to-black flex items-center justify-center border border-white/10 group-hover:border-neon-blue/50 transition-colors">
-                                            {token.symbol[0]}
+                                        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-gray-800 to-black flex items-center justify-center border border-white/10 group-hover:border-neon-blue/50 transition-colors overflow-hidden">
+                                            {token.logoURI ? (
+                                                <img
+                                                    src={token.logoURI}
+                                                    alt={token.symbol}
+                                                    className="w-full h-full object-cover"
+                                                    onError={(e) => {
+                                                        (e.target as HTMLImageElement).style.display = 'none';
+                                                        (e.target as HTMLImageElement).parentElement!.classList.add('fallback-icon');
+                                                    }}
+                                                />
+                                            ) : (
+                                                <span className="text-xs font-bold">{token.symbol.slice(0, 2)}</span>
+                                            )}
                                         </div>
                                         <div>
                                             <div className="font-bold text-gray-200 group-hover:text-neon-blue transition-colors">{token.symbol}</div>
-                                            <div className="text-xs text-gray-500">{token.name}</div>
+                                            <div className="text-xs text-gray-500 max-w-[150px] truncate" title={token.name}>{token.name}</div>
                                         </div>
                                     </div>
                                 </td>

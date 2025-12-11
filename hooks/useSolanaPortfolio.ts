@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Connection, PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js';
 import { TOKEN_PROGRAM_ID } from '@solana/spl-token';
+import { getJupiterTokenList, getJupiterPrices, JupiterToken } from '../utils/jupiter';
 
-// Fallback RPC or using mainnet-beta public
-const RPC_ENDPOINT = 'https://api.mainnet-beta.solana.com';
+// Default public RPC (rate limited often)
+const DEFAULT_RPC = 'https://api.mainnet-beta.solana.com';
 
 export interface TokenAsset {
     mint: string;
@@ -23,22 +24,6 @@ export interface PortfolioData {
     error: string | null;
 }
 
-// Mock prices for demo purposes (since we don't have a guaranteed free oracle key)
-const PRICE_MAP: Record<string, number> = {
-    'SOL': 145.50, // Mock SOL price
-    'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v': 1.00, // USDC
-    'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB': 1.00, // USDT
-    'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263': 0.000015, // BONK
-    'JUPyiwrYJFskUPiHa7hkeR8VUtkqj20HMNtzP2F2z5v': 1.20, // JUP
-};
-
-const TOKEN_METADATA_MAP: Record<string, { symbol: string; name: string }> = {
-    'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v': { symbol: 'USDC', name: 'USD Coin' },
-    'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB': { symbol: 'USDT', name: 'Tether USD' },
-    'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263': { symbol: 'BONK', name: 'Bonk' },
-    'JUPyiwrYJFskUPiHa7hkeR8VUtkqj20HMNtzP2F2z5v': { symbol: 'JUP', name: 'Jupiter' },
-};
-
 export const useSolanaPortfolio = (walletAddresses: string[]) => {
     const [data, setData] = useState<PortfolioData>({
         totalValueUsd: 0,
@@ -56,20 +41,33 @@ export const useSolanaPortfolio = (walletAddresses: string[]) => {
         setData((prev) => ({ ...prev, isLoading: true, error: null }));
 
         try {
-            const connection = new Connection(RPC_ENDPOINT, 'confirmed');
+            // Determine RPC endpoint
+            const customRpc = localStorage.getItem('user_rpc_endpoint');
+            const connection = new Connection(customRpc || DEFAULT_RPC, 'confirmed');
+
             const aggregatedTokens: Record<string, TokenAsset> = {};
             let totalSolBalance = 0;
 
+            // Fetch Token List from Jupiter (cached)
+            const tokenMap = await getJupiterTokenList();
+
             // 1. Initialize SOL asset
-            aggregatedTokens['SOL'] = {
-                mint: 'SOL',
+            // Check Jupiter for SOL price ID (Wrapped SOL mint usually used for pricing: So11111111111111111111111111111111111111112)
+            const WRAPPED_SOL_MINT = 'So11111111111111111111111111111111111111112';
+
+            aggregatedTokens[WRAPPED_SOL_MINT] = {
+                mint: 'SOL', // Display purpose
                 symbol: 'SOL',
                 name: 'Solana',
                 balance: 0,
                 decimals: 9,
-                priceUsd: PRICE_MAP['SOL'] || 0,
+                priceUsd: 0,
                 valueUsd: 0,
+                logoURI: tokenMap[WRAPPED_SOL_MINT]?.logoURI || 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png',
             };
+
+            const allMintsToFetchPrice = new Set<string>();
+            allMintsToFetchPrice.add(WRAPPED_SOL_MINT);
 
             await Promise.all(
                 walletAddresses.map(async (address) => {
@@ -103,18 +101,25 @@ export const useSolanaPortfolio = (walletAddresses: string[]) => {
 
                             if (uiAmount > 0) {
                                 if (!aggregatedTokens[mint]) {
-                                    const meta = TOKEN_METADATA_MAP[mint] || { symbol: mint.slice(0, 4), name: 'Unknown Token' };
+                                    const meta = tokenMap[mint] || {
+                                        symbol: mint.slice(0, 4) + '...',
+                                        name: 'Unknown Token',
+                                        logoURI: undefined
+                                    };
+
                                     aggregatedTokens[mint] = {
                                         mint,
                                         symbol: meta.symbol,
                                         name: meta.name,
                                         balance: 0,
                                         decimals: tokenAmount.decimals,
-                                        priceUsd: PRICE_MAP[mint] || 0,
+                                        priceUsd: 0,
                                         valueUsd: 0,
+                                        logoURI: meta.logoURI,
                                     };
                                 }
                                 aggregatedTokens[mint].balance += uiAmount;
+                                allMintsToFetchPrice.add(mint);
                             }
                         });
                     } catch (e) {
@@ -123,21 +128,31 @@ export const useSolanaPortfolio = (walletAddresses: string[]) => {
                 })
             );
 
-            // Update SOL in aggregation
-            aggregatedTokens['SOL'].balance = totalSolBalance;
+            // Update SOL balance in the aggregation
+            if (aggregatedTokens[WRAPPED_SOL_MINT]) {
+                aggregatedTokens[WRAPPED_SOL_MINT].balance = totalSolBalance;
+            }
+
+            // Fetch Prices from Jupiter
+            const priceMap = await getJupiterPrices(Array.from(allMintsToFetchPrice));
 
             // Calculate totals
             const tokenList: TokenAsset[] = Object.values(aggregatedTokens).map((t) => {
-                // Tiny randomizer for mock prices if 0, just to show UI populated (optional, disabled for now to be clean)
-                const finalPrice = t.priceUsd;
+                // Use the mint (or Wrapped SOL mint for SOL) to find price
+                const lookupMint = t.symbol === 'SOL' ? WRAPPED_SOL_MINT : t.mint;
+                const price = priceMap[lookupMint] || 0;
+
                 return {
                     ...t,
-                    valueUsd: t.balance * finalPrice
+                    priceUsd: price,
+                    valueUsd: t.balance * price
                 };
             });
 
-            // Filter out dust (optional) or zero balances if any
-            const activeTokens = tokenList.filter(t => t.balance > 0).sort((a, b) => b.valueUsd - a.valueUsd);
+            // Filter out zero value assets if desired, or just sort
+            const activeTokens = tokenList
+                .filter(t => t.balance > 0)
+                .sort((a, b) => b.valueUsd - a.valueUsd);
 
             const totalValue = activeTokens.reduce((acc, curr) => acc + curr.valueUsd, 0);
 
@@ -150,7 +165,11 @@ export const useSolanaPortfolio = (walletAddresses: string[]) => {
 
         } catch (err: any) {
             console.error("Portfolio fetch error:", err);
-            setData((prev) => ({ ...prev, isLoading: false, error: "Failed to fetch portfolio data. RPC might be rate limited." }));
+            setData((prev) => ({
+                ...prev,
+                isLoading: false,
+                error: "Failed to fetch portfolio data. Check your connection or RPC endpoint."
+            }));
         }
     }, [walletAddresses]);
 

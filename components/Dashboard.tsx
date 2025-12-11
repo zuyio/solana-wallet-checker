@@ -4,23 +4,33 @@ import { useEffect, useState } from "react";
 import { useSolanaPortfolio } from "@/hooks/useSolanaPortfolio";
 import WalletInput from "@/components/WalletInput";
 import TokenTable from "@/components/TokenTable";
+import SettingsModal from "@/components/SettingsModal";
 import { formatCurrency } from "@/utils/format";
-import { RefreshCw, Wallet as WalletIcon } from "lucide-react";
+import { RefreshCw, Settings, Wallet as WalletIcon } from "lucide-react";
 
 export default function Dashboard() {
     const [wallets, setWallets] = useState<string[]>([]);
     const [isLoaded, setIsLoaded] = useState(false); // To avoid hydration mismatch with localStorage
+    const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+    const [customRpc, setCustomRpc] = useState('');
 
-    // Load wallets from local storage on mount
+    // Load wallets and settings from local storage on mount
     useEffect(() => {
-        const saved = localStorage.getItem("solana-nexus-wallets");
-        if (saved) {
+        const savedWallets = localStorage.getItem("solana-nexus-wallets");
+        const savedRpc = localStorage.getItem("user_rpc_endpoint");
+
+        if (savedWallets) {
             try {
-                setWallets(JSON.parse(saved));
+                setWallets(JSON.parse(savedWallets));
             } catch (e) {
                 console.error("Failed to parse wallets", e);
             }
         }
+
+        if (savedRpc) {
+            setCustomRpc(savedRpc);
+        }
+
         setIsLoaded(true);
     }, []);
 
@@ -30,6 +40,20 @@ export default function Dashboard() {
             localStorage.setItem("solana-nexus-wallets", JSON.stringify(wallets));
         }
     }, [wallets, isLoaded]);
+
+    const handleSaveRpc = (url: string) => {
+        setCustomRpc(url);
+        if (url) {
+            localStorage.setItem("user_rpc_endpoint", url);
+        } else {
+            localStorage.removeItem("user_rpc_endpoint");
+        }
+        // Force reload or just let the hook re-run? 
+        // Hook depends on wallets, not specifically RPC changing prop, but we can trigger a refresh via window or key.
+        // For simplicity, we can reload the page to ensure clean connection state, or just let the user click refresh.
+        // Let's rely on the user clicking refresh for now, or we can force a re-render.
+        window.location.reload();
+    };
 
     const { totalValueUsd, tokens, isLoading, error, refresh } = useSolanaPortfolio(wallets);
 
@@ -47,6 +71,25 @@ export default function Dashboard() {
 
     return (
         <div className="w-full flex flex-col gap-12">
+
+            <SettingsModal
+                isOpen={isSettingsOpen}
+                onClose={() => setIsSettingsOpen(false)}
+                currentRpc={customRpc}
+                onSaveRpc={handleSaveRpc}
+            />
+
+            {/* Header / Nav Area */}
+            <div className="absolute top-0 right-0 p-6 flex gap-4">
+                <button
+                    onClick={() => setIsSettingsOpen(true)}
+                    className="p-3 rounded-full bg-cyber-black/50 border border-cyber-grid text-cyber-gray hover:text-neon-blue hover:border-neon-blue transition-all"
+                    title="Settings"
+                >
+                    <Settings className="w-5 h-5" />
+                </button>
+            </div>
+
             {/* Hero Section: Total Balance */}
             <section className="relative w-full p-8 md:p-12 rounded-3xl overflow-hidden bg-cyber-dark border border-cyber-grid group hover:border-neon-blue/30 transition-all duration-500">
                 <div className="absolute inset-0 bg-cyber-grid bg-[size:20px_20px] opacity-10" />
